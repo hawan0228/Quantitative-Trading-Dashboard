@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>量化交易回測儀表板</title>
+  <link rel="stylesheet" href="assets/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">QT</div>
+      <div class="brand-text">
+        <div class="brand-title">量化交易</div>
+        <div class="brand-sub">課程儀表板</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="nav-item active" data-section="dashboard"><span class="nav-ico">1</span><span>概覽</span></a>
+      <a class="nav-item" data-section="stocks"><span class="nav-ico">2</span><span>股票資料</span></a>
+      <a class="nav-item" data-section="strategies"><span class="nav-ico">3</span><span>策略比較</span></a>
+      <a class="nav-item" data-section="temporal"><span class="nav-ico">4</span><span>時序驗證</span></a>
+      <a class="nav-item" data-section="pairs"><span class="nav-ico">5</span><span>配對交易</span></a>
+      <a class="nav-item" data-section="summary"><span class="nav-ico">6</span><span>總結</span></a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="data-range" class="muted small"></div>
+      <div class="muted small">靜態回測儀表板。非即時交易系統。</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section class="section active" id="section-dashboard">
+      <header class="page-head">
+        <div>
+          <h1>概覽</h1>
+          <p class="lead">
+            這是一個課程報告用的量化交易回測儀表板。
+            比較 Buy-and-Hold、Fair DCA、SMA 20/60、SMA 50/200、SMA 100/300，以及獨立的配對交易研究。
+          </p>
+        </div>
+        <div class="badges" id="ticker-badges"></div>
+      </header>
+
+      <div class="grid grid-4">
+        <div class="card">
+          <div class="card-label">資料區間</div>
+          <div class="card-value" id="dash-range"></div>
+          <div class="card-sub" id="dash-range-days"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">每股票資本</div>
+          <div class="card-value" id="dash-capital"></div>
+          <div class="card-sub" id="dash-price-column"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Fair DCA 規則</div>
+          <div class="card-value" id="dash-dca-rule"></div>
+          <div class="card-sub">總投入資本固定為 USD 10,000。</div>
+        </div>
+        <div class="card">
+          <div class="card-label">配對驗證</div>
+          <div class="card-value" id="dash-pairs-windows"></div>
+          <div class="card-sub">候選配對僅從訓練期相關性選出。</div>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">專案定位</h3>
+          <ul class="bullets">
+            <li>課程專案使用的量化交易回測儀表板。</li>
+            <li>靜態 HTML/CSS/JavaScript 前端由預先生成的資料檔案驅動。</li>
+            <li>SMA 訊號僅基於個別股票的調整後收盤價；SPY 僅作為基準。</li>
+            <li>專注於明確說明假設、公平性與時序驗證。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 class="card-title">主要假設</h3>
+          <div class="kv-list" id="overview-assumptions"></div>
+        </div>
+      </div>
+
+      <h2 class="section-title">Buy-and-Hold 股票最終價值</h2>
+      <div class="card chart-card short">
+        <canvas id="dash-bh-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">各股票與策略年化報酬</h2>
+      <div class="card chart-card tall">
+        <canvas id="dash-ann-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="section" id="section-stocks">
+      <header class="page-head">
+        <div>
+          <h1>股票資料</h1>
+          <p class="lead">
+            儀表板使用五檔公開交易的大型美股，且均具備超過 10 年的調整後收盤價歷史資料。
+          </p>
+        </div>
+        <div class="controls">
+          <label>股票 <select id="stock-select"></select></label>
+        </div>
+      </header>
+
+      <div class="card table-card">
+        <table id="stock-summary-table">
+          <thead>
+            <tr>
+              <th>代碼</th>
+              <th>公司</th>
+              <th>產業</th>
+              <th>起始</th>
+              <th>結束</th>
+              <th>資料筆數</th>
+              <th>首筆價格</th>
+              <th>末筆價格</th>
+              <th>來源</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="grid grid-3">
+        <div class="card">
+          <div class="card-label">選定股票</div>
+          <div class="card-value mono" id="stock-meta-ticker"></div>
+          <div class="card-sub" id="stock-meta-company"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">產業</div>
+          <div class="card-value small-value" id="stock-meta-sector"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">覆蓋區間</div>
+          <div class="card-value mono" id="stock-meta-coverage"></div>
+          <div class="card-sub" id="stock-meta-observations"></div>
+        </div>
+      </div>
+
+      <h2 class="section-title">Adjusted Close Price</h2>
+      <div class="card chart-card tall">
+        <canvas id="stock-price-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">Daily Trading Volume</h2>
+      <div class="card chart-card short">
+        <canvas id="stock-volume-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="section" id="section-strategies">
+      <header class="page-head">
+        <div>
+          <h1>策略比較</h1>
+          <p class="lead">
+            問題一比較 Buy-and-Hold、Fair DCA，以及三組預定義 SMA 交叉規則，皆使用相同 USD 10,000 的資本基準。
+          </p>
+        </div>
+        <div class="controls">
+          <label>股票 <select id="strategy-stock-select"></select></label>
+        </div>
+      </header>
+
+      <div class="card">
+        <h3 class="card-title">比較重點</h3>
+        <ul class="bullets">
+          <li>Buy-and-Hold 於第一個可交易日投入 USD 10,000。</li>
+          <li>Fair DCA 同樣投入 USD 10,000，但分散於 N 個月，每月投資 10,000 / N。</li>
+          <li>SMA 策略從 USD 10,000 開始，於多頭交叉買入，賣出訊號後保留現金。</li>
+          <li>假設可交易碎股。不包含交易成本、滑價與稅負。</li>
+        </ul>
+      </div>
+
+      <div class="grid grid-3" id="strategy-cards"></div>
+
+      <div class="card table-card">
+        <table id="strategy-table">
+          <thead>
+            <tr>
+              <th>策略</th>
+              <th>初始資本</th>
+              <th>總投入</th>
+              <th>最終價值</th>
+              <th>累計報酬</th>
+              <th>年化報酬</th>
+              <th>超額 vs SPY</th>
+              <th>是否優於 SPY</th>
+              <th>最大回撤</th>
+              <th>波動率</th>
+              <th>Sharpe 比率</th>
+              <th>交易次數</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-title">權益曲線</h2>
+      <div class="card chart-card tall">
+        <canvas id="strategy-equity-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">回撤曲線</h2>
+      <div class="card chart-card tall">
+        <canvas id="strategy-drawdown-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="section" id="section-temporal">
+      <header class="page-head">
+        <div>
+          <h1>時序驗證</h1>
+          <p class="lead">
+            時序資料不應使用隨機訓練/測試切分。本節使用擴增視窗評估不同期間的樣本外穩定性。
+          </p>
+        </div>
+        <div class="controls">
+          <label>股票 <select id="tv-stock-select"></select></label>
+          <label>策略 <select id="tv-strategy-select"></select></label>
+        </div>
+      </header>
+
+      <div class="card">
+        <h3 class="card-title">驗證設計</h3>
+        <ul class="bullets">
+          <li>時間序列資料不使用隨機拆分。</li>
+          <li>使用擴增視窗，例如 2014 訓練 / 2015 起測試，再增加訓練期測試後續年份。</li>
+          <li>SMA 策略採固定規則參數，時序驗證評估穩定性，而非在測試資料上優化。</li>
+        </ul>
+      </div>
+
+      <h2 class="section-title">各驗證視窗年化報酬</h2>
+      <div class="card chart-card">
+        <canvas id="tv-ann-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">各驗證視窗最大回撤</h2>
+      <div class="card chart-card">
+        <canvas id="tv-dd-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">驗證結果表格</h2>
+      <div class="card table-card scroll">
+        <table id="tv-table">
+          <thead>
+            <tr>
+              <th>視窗</th>
+              <th>訓練起</th>
+              <th>訓練迄</th>
+              <th>測試起</th>
+              <th>測試迄</th>
+              <th>最終價值</th>
+              <th>累計報酬</th>
+              <th>年化報酬</th>
+              <th>最大回撤</th>
+              <th>波動率</th>
+              <th>Sharpe 比率</th>
+              <th>交易次數</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="section-pairs">
+      <header class="page-head">
+        <div>
+          <h1>配對交易</h1>
+          <p class="lead">
+            問題二在每個訓練視窗內選擇候選配對，並僅在測試期上執行 z-score 價差策略，以降低提前看偏誤。
+          </p>
+        </div>
+        <div class="controls">
+          <label>驗證視窗 <select id="pair-window-select"></select></label>
+        </div>
+      </header>
+
+      <div class="card">
+        <h3 class="card-title">配對交易假設</h3>
+        <ul class="bullets">
+          <li>初始資本為 USD 10,000。</li>
+          <li>允許放空。每次進場採用等額 50% 多頭與 50% 空頭。</li>
+          <li>價差 = log(price A) - log(price B)，z-score 視窗 = 60，進場條件 |z| ≥ 2，平倉條件 |z| &lt; 0.5。</li>
+          <li>SPY 不納入配對交易；候選配對僅從正式股票母體中選出。</li>
+          <li>相關性有助於挑選候選配對，但相關性本身不保證均值回歸。</li>
+        </ul>
+      </div>
+
+      <div class="grid grid-4">
+        <div class="card">
+          <div class="card-label">選定配對</div>
+          <div class="card-value" id="pair-selected"></div>
+          <div class="card-sub" id="pair-period"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">訓練期相關性</div>
+          <div class="card-value" id="pair-corr"></div>
+          <div class="card-sub">僅從訓練資料中選出。</div>
+        </div>
+        <div class="card">
+          <div class="card-label">測試期最終價值</div>
+          <div class="card-value" id="pair-final"></div>
+          <div class="card-sub" id="pair-returns"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Sharpe / 交易</div>
+          <div class="card-value" id="pair-sharpe"></div>
+          <div class="card-sub" id="pair-trades"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">均值回歸說明</h3>
+        <p class="note-text" id="pair-mean-reversion-note"></p>
+      </div>
+
+      <h2 class="section-title">訓練期配對相關性表</h2>
+      <div class="card table-card">
+        <table id="pair-corr-table">
+          <thead>
+            <tr>
+              <th>配對</th>
+              <th>股票 A</th>
+              <th>股票 B</th>
+              <th>相關性</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-title">價差圖</h2>
+      <div class="card chart-card">
+        <canvas id="pair-spread-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">Z-score 圖</h2>
+      <div class="card chart-card">
+        <canvas id="pair-zscore-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">配對交易權益曲線</h2>
+      <div class="card chart-card">
+        <canvas id="pair-equity-chart"></canvas>
+      </div>
+
+      <h2 class="section-title">配對交易時序驗證結果</h2>
+      <div class="card table-card scroll">
+        <table id="pair-tv-table">
+          <thead>
+            <tr>
+              <th>視窗</th>
+              <th>訓練起</th>
+              <th>訓練迄</th>
+              <th>測試起</th>
+              <th>測試迄</th>
+              <th>選定配對</th>
+              <th>訓練期相關性</th>
+              <th>最終價值</th>
+              <th>累計報酬</th>
+              <th>年化報酬</th>
+              <th>最大回撤</th>
+              <th>波動率</th>
+              <th>Sharpe 比率</th>
+              <th>交易次數</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="section-summary">
+      <header class="page-head">
+        <div>
+          <h1>總結與限制</h1>
+          <p class="lead">
+            本頁匯整跨策略排名、正式假設與應收錄於最終報告的主要限制。
+          </p>
+        </div>
+      </header>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">主要限制</h3>
+          <ul class="bullets">
+            <li>僅使用五檔大型美股，結果可能具備特定產業偏向。</li>
+            <li>未包含交易成本、滑價、借貸成本或稅負。</li>
+            <li>所有股票策略皆假設可交易碎股。</li>
+            <li>DCA 與一次性買入皆投入相同總資本，但資本時點刻意不同。</li>
+            <li>相關性不保證均值回歸，實務上放空可能昂貴或困難。</li>
+            <li>SMA 交叉規則可能在急速反轉時落後，且在強勢牛市中可能表現不佳。
+          </li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3 class="card-title">建議改進</h3>
+          <ul class="bullets">
+            <li>加入交易成本、滑價、稅負和借貸成本。</li>
+            <li>擴充股票母體至更多產業與更多配對候選。</li>
+            <li>採用滾動參數測試或更嚴格執行假設的步進式驗證。</li>
+            <li>納入無風險利率支援與更完整的風險調整績效指標。</li>
+            <li>加入更強的均值回歸檢測，例如在環境允許時使用共整合診斷。</li>
+          </ul>
+        </div>
+      </div>
+
+      <h2 class="section-title">年化報酬排序</h2>
+      <div class="card table-card">
+        <table id="summary-rank-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>代碼</th>
+              <th>策略</th>
+              <th>最終價值</th>
+              <th>累計報酬</th>
+              <th>年化報酬</th>
+              <th>最大回撤</th>
+              <th>波動率</th>
+              <th>Sharpe 比率</th>
+              <th>交易次數</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-title">回測假設</h2>
+      <div class="card table-card">
+        <table id="assumptions-table">
+          <thead>
+            <tr>
+              <th>項目</th>
+              <th>內容</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-title">個人貢獻說明</h2>
+      <div class="card">
+        <p class="note-text">
+          請於報告或 README 中填寫實際成員姓名、職責與百分比分配後再提交。
+        </p>
+      </div>
+    </section>
+
+    <footer class="footer muted small">
+      由 <code>generate_data.py</code> 生成，並使用原生 HTML、CSS、JavaScript 與 Chart.js 呈現。
+    </footer>
+  </main>
+
+  <script src="data/data_bundle.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script src="assets/js/main.js"></script>
+</body>
+</html>

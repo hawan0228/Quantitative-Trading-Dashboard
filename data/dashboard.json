@@ -1,0 +1,31 @@
+{
+  "project": "量化交易回測儀表板",
+  "project_type": "靜態研究儀表板",
+  "not_a_live_trading_system": true,
+  "tickers": [
+    "MCD",
+    "KO",
+    "AAPL",
+    "MSFT",
+    "ORCL"
+  ],
+  "market_benchmark": "SPY",
+  "data_range": {
+    "start": "1996-01-02",
+    "end": "2026-05-08"
+  },
+  "data_source": "Yahoo Finance via yfinance",
+  "price_column": "Adj Close",
+  "initial_capital": 10000.0,
+  "strategies": [
+    "Buy-and-Hold",
+    "Fair DCA",
+    "SMA 20/60",
+    "SMA 50/200",
+    "SMA 100/300"
+  ],
+  "default_stock": "MCD",
+  "default_temporal_strategy": "SMA 50/200",
+  "default_pairs_window": "W01",
+  "generated_at": "2026-05-18"
+}

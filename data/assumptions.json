@@ -1,0 +1,56 @@
+{
+  "stock_universe": [
+    "MCD",
+    "KO",
+    "AAPL",
+    "MSFT",
+    "ORCL"
+  ],
+  "market_benchmark": "SPY",
+  "data_source": "Yahoo Finance via yfinance，或使用快取的 stock_prices.csv",
+  "requested_start_date": "1996-01-02",
+  "requested_end_date": "2026-05-11",
+  "actual_start_date": "1996-01-02",
+  "actual_end_date": "2026-05-08",
+  "price_column": "Adj Close",
+  "initial_capital": 10000.0,
+  "dca_total_invested": 10000.0,
+  "dca_monthly_contribution_rule": "對於 N 個日曆月：投入 = 10000.0/N。範例：365 個月。未投入資本保留現金。",
+  "fractional_shares": true,
+  "transaction_costs": "未包含",
+  "slippage": "未包含",
+  "taxes": "未包含",
+  "risk_free_rate": 0.0,
+  "signal_execution_timing": "同日收盤執行（簡化）。",
+  "sma_strategies": [
+    {
+      "name": "SMA 20/60",
+      "short_window": 20,
+      "long_window": 60
+    },
+    {
+      "name": "SMA 50/200",
+      "short_window": 50,
+      "long_window": 200
+    },
+    {
+      "name": "SMA 100/300",
+      "short_window": 100,
+      "long_window": 300
+    }
+  ],
+  "sma_signal_source": "每組 SMA 策略僅使用該檔股票自身的調整後收盤價。",
+  "sma_parameter_note": "預先定義代表性周期（短/中/長）。不在測試資料上優化。",
+  "pairs_zscore_window": 60,
+  "pairs_entry_threshold": 2.0,
+  "pairs_exit_threshold": 0.5,
+  "pairs_position_sizing": "每次進場等額 50% 多頭 / 50% 空頭",
+  "short_selling": true,
+  "borrowing_costs": "未包含",
+  "temporal_validation_method": "擴增視窗。時間序列不使用隨機拆分。",
+  "pair_selection_rule": "僅在股票母體內選擇訓練期日報酬相關性最高的配對。不使用測試期資料。",
+  "look_ahead_bias_control": "配對在每個訓練視窗內選出，僅於後續測試視窗測試。",
+  "spy_usage_note": "SPY 僅作為市場基準；不納入配對交易。",
+  "removed_strategy_note": "已移除舊有相對動量輸出。活躍策略為 Buy-and-Hold、Fair DCA、SMA 20/60、SMA 50/200 以及 SMA 100/300。",
+  "cleanup_note": "已清理舊有檔案；若需要更新資料，請執行 generate_data.py --refresh。"
+}

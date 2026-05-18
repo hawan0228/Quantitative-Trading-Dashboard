@@ -1,0 +1,2 @@
+ticker,strategy,asset_type,initial_capital,total_invested,final_value,cumulative_return,annualized_return,max_drawdown,volatility,sharpe_ratio,number_of_trades,notes
+SPY,Buy-and-Hold,benchmark,10000.0,10000.0,200367.5,19.03675,0.103822,-0.551894,0.192428,0.539537,1,"SPY market benchmark. Buy-and-hold USD 10,000 on first trading day."

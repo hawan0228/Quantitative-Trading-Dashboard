@@ -1,0 +1,7 @@
+ticker,company_name,sector,asset_type,start_date,end_date,observations,first_price,last_price,data_source
+MCD,McDonald's Corporation,Consumer Cyclical,stock,1996-01-02,2026-05-08,7638,11.741809,275.75,Yahoo Finance via yfinance
+KO,The Coca-Cola Company,Consumer Defensive,stock,1996-01-02,2026-05-08,7638,8.657427,78.419998,Yahoo Finance via yfinance
+AAPL,Apple Inc.,Technology,stock,1996-01-02,2026-05-08,7638,0.240419,293.050018,Yahoo Finance via yfinance
+MSFT,Microsoft Corporation,Technology,stock,1996-01-02,2026-05-08,7638,3.418719,415.119995,Yahoo Finance via yfinance
+ORCL,Oracle Corporation,Technology,stock,1996-01-02,2026-05-08,7638,2.552572,195.949997,Yahoo Finance via yfinance
+SPY,SPDR S&P 500 ETF Trust,Market Benchmark,benchmark,1996-01-02,2026-05-08,7638,36.813354,737.619995,Yahoo Finance via yfinance
