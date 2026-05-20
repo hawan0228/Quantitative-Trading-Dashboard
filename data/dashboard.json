@@ -25,6 +25,7 @@
     "SMA 100/300"
   ],
   "default_stock": "MCD",
+  "default_sma_strategy": "SMA 50/200",
   "default_temporal_strategy": "SMA 50/200",
   "default_pairs_window": "W01",
   "generated_at": "2026-05-20"

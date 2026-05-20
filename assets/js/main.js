@@ -16,6 +16,11 @@
     'SMA 50/200',
     'SMA 100/300',
   ];
+  const SMA_STRATEGIES = [
+    'SMA 20/60',
+    'SMA 50/200',
+    'SMA 100/300',
+  ];
   const STRATEGY_LABELS = {
     'Buy-and-Hold': 'Buy-and-Hold',
     'Fair DCA': 'Fair DCA',
@@ -77,6 +82,7 @@
   const marketBenchmark = D.market_benchmark || [];
   const priceRows = D.stock_prices || [];
   const equityCurves = D.equity_curves || [];
+  const smaTradeMarkers = D.sma_trade_markers || [];
   const temporalRows = D.temporal_validation || [];
   const temporalRobustness = D.temporal_validation_robustness || [];
   const pairTemporalRows = D.pairs_temporal_validation || [];
@@ -115,6 +121,10 @@
     return fmtNum(value, 2);
   }
 
+  function priceDate(row) {
+    return row.date || row.Date;
+  }
+
   function cls(value) {
     return Number(value) >= 0 ? 'pos' : 'neg';
   }
@@ -137,6 +147,131 @@
       option.value = value;
       option.textContent = value;
       el.appendChild(option);
+    });
+  }
+
+  function smaWindows(strategy) {
+    const match = /SMA\s+(\d+)\/(\d+)/.exec(strategy);
+    if (!match) return { shortWindow: 50, longWindow: 200 };
+    return { shortWindow: Number(match[1]), longWindow: Number(match[2]) };
+  }
+
+  function movingAverage(rows, windowSize) {
+    let rollingSum = 0;
+    return rows.map((row, index) => {
+      const price = Number(row.adj_close);
+      rollingSum += price;
+      if (index >= windowSize) rollingSum -= Number(rows[index - windowSize].adj_close);
+      if (index < windowSize - 1) return null;
+      return { x: priceDate(row), y: rollingSum / windowSize };
+    }).filter(Boolean);
+  }
+
+  function renderSmaSignalChart(ticker, strategy) {
+    const rows = priceRows
+      .filter((row) => row.ticker === ticker)
+      .sort((a, b) => String(priceDate(a)).localeCompare(String(priceDate(b))));
+    const markers = smaTradeMarkers
+      .filter((row) => row.ticker === ticker && row.strategy === strategy)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const { shortWindow, longWindow } = smaWindows(strategy);
+    const buyMarkers = markers
+      .filter((row) => String(row.action || row.signal).toUpperCase() === 'BUY')
+      .map((row) => ({ x: row.date, y: Number(row.price), marker: row }));
+    const sellMarkers = markers
+      .filter((row) => String(row.action || row.signal).toUpperCase() === 'SELL')
+      .map((row) => ({ x: row.date, y: Number(row.price), marker: row }));
+
+    // Chart.js draws higher order values first, so smaller values appear above.
+    const LAYERS = {
+      price: 30,
+      sma: 20,
+      signal: 10,
+    };
+
+    QTCharts.line('sma-signal-chart', [
+      {
+        label: `${ticker} 調整後收盤價`,
+        data: rows.map((row) => ({ x: priceDate(row), y: row.adj_close })),
+        borderColor: '#d8e3ef',
+        backgroundColor: 'transparent',
+        borderWidth: 1.4,
+        pointRadius: 0,
+        order: LAYERS.price,
+      },
+      {
+        label: `短期 SMA ${shortWindow}`,
+        data: movingAverage(rows, shortWindow),
+        borderColor: '#f5b75a',
+        backgroundColor: 'transparent',
+        borderWidth: 1.2,
+        pointRadius: 0,
+        order: LAYERS.sma,
+      },
+      {
+        label: `長期 SMA ${longWindow}`,
+        data: movingAverage(rows, longWindow),
+        borderColor: '#cc8eff',
+        backgroundColor: 'transparent',
+        borderWidth: 1.2,
+        pointRadius: 0,
+        order: LAYERS.sma,
+      },
+      {
+        type: 'scatter',
+        label: '進場訊號 Buy',
+        data: buyMarkers,
+        showLine: false,
+        pointStyle: 'triangle',
+        pointRadius: 6,
+        pointHoverRadius: 8,
+        pointHitRadius: 10,
+        pointBackgroundColor: '#2ecc71',
+        pointBorderColor: '#0b0f17',
+        pointBorderWidth: 1,
+        order: LAYERS.signal,
+      },
+      {
+        type: 'scatter',
+        label: '出場訊號 Sell',
+        data: sellMarkers,
+        showLine: false,
+        pointStyle: 'triangle',
+        pointRotation: 180,
+        pointRadius: 6,
+        pointHoverRadius: 8,
+        pointHitRadius: 10,
+        pointBackgroundColor: '#ff5d6c',
+        pointBorderColor: '#0b0f17',
+        pointBorderWidth: 1,
+        order: LAYERS.signal,
+      },
+    ], {
+      yFormat: (v) => '$' + Number(v).toFixed(0),
+      interaction: { mode: 'nearest', intersect: false },
+      tooltipCallbacks: {
+        title(items) {
+          const item = items[0];
+          const raw = item && item.raw ? item.raw : {};
+          return `日期：${raw.x || item.label}`;
+        },
+        label(context) {
+          const marker = context.raw && context.raw.marker;
+          if (!marker) {
+            return `${context.dataset.label}：${fmtMoney(context.parsed.y, 2)}`;
+          }
+          return [
+            `策略：${marker.strategy}`,
+            `動作：${String(marker.action || marker.signal).toUpperCase()}`,
+            `價格：${fmtMoney(marker.price, 2)}`,
+            `短期 SMA：${fmtMoney(marker.short_sma, 2)}`,
+            `長期 SMA：${fmtMoney(marker.long_sma, 2)}`,
+            `權益：${fmtMoney(marker.equity, 2)}`,
+            `現金：${fmtMoney(marker.cash_after, 2)}`,
+            `股數：${fmtNum(marker.shares_after, 4)}`,
+          ];
+        },
+      },
     });
   }
 
@@ -289,6 +424,8 @@
   }
 
   function renderStrategySection(ticker) {
+    const smaSelect = document.getElementById('strategy-sma-select');
+    const selectedSmaStrategy = smaSelect ? smaSelect.value : 'SMA 50/200';
     const rows = perfRows.filter((row) => row.ticker === ticker);
 
     const cards = document.getElementById('strategy-cards');
@@ -395,6 +532,8 @@
       }]),
       { yFormat: (v) => (v * 100).toFixed(0) + '%' }
     );
+
+    renderSmaSignalChart(ticker, selectedSmaStrategy);
   }
 
   function renderTemporalSection(ticker, strategy) {
@@ -622,24 +761,28 @@
 
     populateSelect('stock-select', tickers);
     populateSelect('strategy-stock-select', formalStocks);
+    populateSelect('strategy-sma-select', SMA_STRATEGIES);
     populateSelect('tv-stock-select', formalStocks);
     populateSelect('tv-strategy-select', STRATEGIES);
     populateSelect('pair-window-select', sortByWindow(pairTemporalRows).map((row) => row.window_id));
 
     const stockSelect = document.getElementById('stock-select');
     const strategyStockSelect = document.getElementById('strategy-stock-select');
+    const strategySmaSelect = document.getElementById('strategy-sma-select');
     const tvStockSelect = document.getElementById('tv-stock-select');
     const tvStrategySelect = document.getElementById('tv-strategy-select');
     const pairWindowSelect = document.getElementById('pair-window-select');
 
     stockSelect.value = D.dashboard.default_stock;
     strategyStockSelect.value = D.dashboard.default_stock;
+    strategySmaSelect.value = D.dashboard.default_sma_strategy || 'SMA 50/200';
     tvStockSelect.value = D.dashboard.default_stock;
     tvStrategySelect.value = D.dashboard.default_temporal_strategy;
     if (D.dashboard.default_pairs_window) pairWindowSelect.value = D.dashboard.default_pairs_window;
 
     stockSelect.addEventListener('change', () => renderStockSection(stockSelect.value));
     strategyStockSelect.addEventListener('change', () => renderStrategySection(strategyStockSelect.value));
+    strategySmaSelect.addEventListener('change', () => renderStrategySection(strategyStockSelect.value));
     tvStockSelect.addEventListener('change', () => renderTemporalSection(tvStockSelect.value, tvStrategySelect.value));
     tvStrategySelect.addEventListener('change', () => renderTemporalSection(tvStockSelect.value, tvStrategySelect.value));
     pairWindowSelect.addEventListener('change', () => renderPairsSection(pairWindowSelect.value));
