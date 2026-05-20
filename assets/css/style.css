@@ -180,7 +180,7 @@ body {
 
 /* --------------------------------- Tables ------------------------------- */
 .table-card { padding: 6px 0 0; overflow: hidden; }
-.table-card.scroll { max-height: 480px; overflow-y: auto; }
+.table-card.scroll { max-height: 480px; overflow-y: auto; overflow-x: auto; }
 table {
   width: 100%;
   border-collapse: collapse;
