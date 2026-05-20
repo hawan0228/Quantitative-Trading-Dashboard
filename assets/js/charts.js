@@ -59,7 +59,7 @@ window.QTCharts = {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
-        interaction: { mode: 'index', intersect: false },
+        interaction: opts.interaction || { mode: 'index', intersect: false },
         plugins: {
           legend: { position: 'top', align: 'end' },
           tooltip: { callbacks: opts.tooltipCallbacks },

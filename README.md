@@ -62,6 +62,12 @@ python -m http.server 8000
 # 然後訪問 http://localhost:8000
 ```
 
+## SMA 進出場訊號視覺化
+
+Dashboard 在「策略比較」頁面新增 SMA 進出場圖。Buy marker 表示 SMA short > SMA long 後策略進場，Sell marker 表示 SMA short <= SMA long 後策略出場；圖表同時顯示個股 Adjusted Close price 與所選 SMA 策略的短期 / 長期均線。此功能只用於視覺化，不改變回測邏輯、績效計算或交易判斷。
+
+SMA 訊號只使用個股自身 Adjusted Close price，SPY 不參與訊號。前端使用輕量化的 `data/sma_trade_markers.csv` / `data_bundle.js` 中的 `sma_trade_markers`，只包含 BUY / SELL 交易點，不包含每日 HOLD。
+
 主要輸出檔案（`data/`）：
 
 - `stock_prices.csv` — MCD、KO、AAPL、MSFT、ORCL、SPY 的 OHLCV / 調整後價格
@@ -70,6 +76,7 @@ python -m http.server 8000
 - `strategy_performance.csv` — 25 列（5 檔股票 × 5 個策略）
 - `equity_curves.csv` — 所有策略的日度權益曲線
 - `strategy_signals.csv` — DCA 與 SMA 交易訊號
+- `sma_trade_markers.csv` — Dashboard 使用的 SMA BUY / SELL 進出場標記
 - `temporal_validation.csv` — 擴增視窗驗證輸出
 - `pair_correlations.csv` — 10 對配對（正式 5 檔股票母體）
 - `pairs_window_correlations.csv`、`pairs_temporal_validation.csv`、`pairs_temporal_curves.csv`、`pairs_temporal_signals.csv` — 配對交易輸出

@@ -14,6 +14,10 @@
 - 配對交易：僅針對 5 檔股票母體進行配對選擇與時間驗證；`data/pair_correlations.csv` 含 10 對配對 — 已確認。
 - 已從活躍輸出與儀表板/假設檔中移除舊有相對動量策略。
 - 假設已說明 SMA 訊號僅基於每檔股票自身的調整後收盤價，且 SPY 僅作為基準使用。
+- `data/sma_trade_markers.csv` 已產生，僅包含 `SMA 20/60`、`SMA 50/200`、`SMA 100/300` 的 BUY / SELL 交易點。
+- Dashboard「策略比較」頁面已新增 SMA Buy / Sell markers 圖，支援切換三組 SMA 策略。
+- 已確認 SPY 不出現在 SMA trade markers，且 Momentum / 12M Relative Momentum 舊策略不出現在 SMA trade markers。
+- `data_bundle.js` 僅內嵌輕量化 `sma_trade_markers` 供前端使用，避免加入每日 HOLD 訊號。
 
 已重新生成的檔案
 
@@ -22,6 +26,7 @@
 - `data/strategy_performance.csv`（25 列）
 - `data/equity_curves.csv`
 - `data/strategy_signals.csv`
+- `data/sma_trade_markers.csv`
 - `data/temporal_validation.csv`
 - `data/pair_correlations.csv`（10 對）
 - `data/pairs_window_correlations.csv`
@@ -40,10 +45,13 @@
 3. 驗證 `strategy_performance.csv` 行數等於 25。
 4. 驗證 `stock_summary.csv` 行數等於 6（5 檔股票 + SPY）。
 5. 確認 `data/assumptions.json` 包含 `actual_start_date` 與 `actual_end_date`。
-
-註：專案中存在 smoke test 腳本，但目前環境未安裝 Playwright，因此未執行瀏覽器端 smoke 測試。
-5. 驗證 `pair_correlations.csv` 包含 10 對配對，且不含 SPY。
-6. 驗證 `pairs_window_correlations.csv`、`pairs_temporal_validation.csv`、`pairs_temporal_curves.csv`、`pairs_temporal_signals.csv` 已生成，且僅包含 5 檔股票母體的配對資料。
+6. 驗證 `sma_trade_markers.csv` 欄位包含 `date`、`ticker`、`strategy`、`action`、`price`、`short_sma`、`long_sma`，且 `action` 僅為 `BUY` / `SELL`。
+7. 驗證 SMA trade markers 只包含正式股票母體，不含 `SPY`、`Buy-and-Hold`、`Fair DCA` 或 Momentum 舊策略。
+8. 驗證 `data_bundle.js` 大小沒有明顯惡化：目前約 90.88 MB，且已改為前端使用 `sma_trade_markers`，不再內嵌完整 `strategy_signals` key。
+9. 執行 `python _smoketest.py`，Dashboard 各頁面與所有 canvas 均成功繪製，包含新增的 `sma-signal-chart`。
+10. 以 Playwright 額外檢查「策略比較」頁，切換股票至 `MSFT`、SMA 策略至 `SMA 100/300` 後，價格線、SMA 100、SMA 300、Buy markers、Sell markers 均存在，且 tooltip callback 已掛載。
+11. 驗證 `pair_correlations.csv` 包含 10 對配對，且不含 SPY。
+12. 驗證 `pairs_window_correlations.csv`、`pairs_temporal_validation.csv`、`pairs_temporal_curves.csv`、`pairs_temporal_signals.csv` 已生成，且僅包含 5 檔股票母體的配對資料。
 
 補充說明與後續確認
 

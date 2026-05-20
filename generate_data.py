@@ -120,6 +120,12 @@ def to_float(value: float) -> float:
     return float(np.round(value, 10))
 
 
+def nullable_float(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
 def perf_metrics(equity: pd.Series, total_invested: float, initial_capital: float) -> Performance:
     equity = equity.dropna().astype(float)
     if equity.empty:
@@ -250,6 +256,7 @@ def strategy_buy_and_hold(prices: pd.Series, initial_capital: float = INITIAL_CA
     signals = pd.DataFrame([{
         "date": prices.index[0],
         "signal": "BUY",
+        "action": "BUY",
         "price": float(prices.iloc[0]),
         "shares": float(shares),
         "cash_after": 0.0,
@@ -294,6 +301,7 @@ def strategy_dca(prices: pd.Series, total_invested: float = INITIAL_CAPITAL) -> 
             signal_rows.append({
                 "date": current_date,
                 "signal": "BUY",
+                "action": "BUY",
                 "price": float(price),
                 "shares": float(bought),
                 "contribution": float(contribution),
@@ -354,41 +362,77 @@ def strategy_sma_cross(
     first_above = int(above.loc[first_test_day]) if pd.notna(above.loc[first_test_day]) else 0
     if history is not None and first_above == 1:
         first_price = float(prices.iloc[0])
+        cash_before = cash_balance
+        shares_before = shares
         shares = cash_balance / first_price
         cash_balance = 0.0
         in_market = True
         signal_rows.append({
             "date": first_test_day,
             "signal": "BUY",
+            "action": "BUY",
             "price": first_price,
             "shares": float(shares),
+            "shares_before": float(shares_before),
+            "shares_after": float(shares),
+            "cash_before": float(cash_before),
             "cash_after": 0.0,
+            "equity": float(shares * first_price + cash_balance),
+            "short_sma": nullable_float(sma_short.loc[first_test_day]),
+            "long_sma": nullable_float(sma_long.loc[first_test_day]),
+            "short_window": short_window,
+            "long_window": long_window,
             "reason": "Bullish regime active at test start.",
         })
 
     for current_date, price in prices.items():
         signal = cross.loc[current_date] if current_date in cross.index else 0.0
+        price_value = float(price)
+        short_sma_value = nullable_float(sma_short.loc[current_date])
+        long_sma_value = nullable_float(sma_long.loc[current_date])
         if signal == 1 and not in_market:
-            shares = cash_balance / price
+            cash_before = cash_balance
+            shares_before = shares
+            shares = cash_balance / price_value
             cash_balance = 0.0
             in_market = True
             signal_rows.append({
                 "date": current_date,
                 "signal": "BUY",
-                "price": float(price),
+                "action": "BUY",
+                "price": price_value,
                 "shares": float(shares),
+                "shares_before": float(shares_before),
+                "shares_after": float(shares),
+                "cash_before": float(cash_before),
                 "cash_after": 0.0,
+                "equity": float(shares * price_value + cash_balance),
+                "short_sma": short_sma_value,
+                "long_sma": long_sma_value,
+                "short_window": short_window,
+                "long_window": long_window,
             })
         elif signal == -1 and in_market:
-            cash_balance = shares * price
+            cash_before = cash_balance
+            shares_before = shares
+            cash_balance = shares * price_value
             shares = 0.0
             in_market = False
             signal_rows.append({
                 "date": current_date,
                 "signal": "SELL",
-                "price": float(price),
+                "action": "SELL",
+                "price": price_value,
                 "shares": 0.0,
+                "shares_before": float(shares_before),
+                "shares_after": 0.0,
+                "cash_before": float(cash_before),
                 "cash_after": float(cash_balance),
+                "equity": float(cash_balance),
+                "short_sma": short_sma_value,
+                "long_sma": long_sma_value,
+                "short_window": short_window,
+                "long_window": long_window,
             })
 
         asset_value = shares * price
@@ -422,6 +466,7 @@ def strategy_spy_buy_and_hold(prices: pd.Series, initial_capital: float = INITIA
     signals = pd.DataFrame([{
         "date": prices.index[0],
         "signal": "BUY",
+        "action": "BUY",
         "price": float(prices.iloc[0]),
         "shares": float(shares),
         "cash_after": 0.0,
@@ -581,6 +626,49 @@ def run_problem_one_backtests(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
     benchmark_df = pd.DataFrame(benchmark_rows)
     
     return performance_df, curves_df, signals_df, benchmark_df
+
+
+def build_sma_trade_markers(strategy_signals: pd.DataFrame) -> pd.DataFrame:
+    marker_columns = [
+        "date",
+        "ticker",
+        "strategy",
+        "signal",
+        "action",
+        "price",
+        "equity",
+        "cash_before",
+        "cash_after",
+        "shares_before",
+        "shares_after",
+        "shares",
+        "short_sma",
+        "long_sma",
+        "short_window",
+        "long_window",
+    ]
+    if strategy_signals.empty:
+        return pd.DataFrame(columns=marker_columns)
+
+    allowed_strategies = {item["name"] for item in SMA_STRATEGIES}
+    markers = strategy_signals.copy()
+    if "action" not in markers.columns:
+        markers["action"] = markers["signal"]
+    markers["action"] = markers["action"].astype(str).str.upper()
+    markers["signal"] = markers["signal"].astype(str).str.upper()
+
+    markers = markers[
+        markers["ticker"].isin(STOCK_UNIVERSE)
+        & markers["strategy"].isin(allowed_strategies)
+        & markers["action"].isin(["BUY", "SELL"])
+    ].copy()
+
+    for column in marker_columns:
+        if column not in markers.columns:
+            markers[column] = None
+    markers = markers[marker_columns]
+    markers = markers.sort_values(["ticker", "strategy", "date", "action"]).reset_index(drop=True)
+    return markers
 
 
 def temporal_validation(prices_df: pd.DataFrame, spy_prices: pd.Series) -> pd.DataFrame:
@@ -995,11 +1083,14 @@ def main(refresh: bool = False) -> None:
 
     # Problem 1 backtests
     strategy_performance, equity_curves, strategy_signals, market_benchmark = run_problem_one_backtests(prices_df)
+    sma_trade_markers = build_sma_trade_markers(strategy_signals)
     strategy_performance.to_csv(DATA_DIR / "strategy_performance.csv", index=False)
     equity_curves.to_csv(DATA_DIR / "equity_curves.csv", index=False)
     strategy_signals.to_csv(DATA_DIR / "strategy_signals.csv", index=False)
+    sma_trade_markers.to_csv(DATA_DIR / "sma_trade_markers.csv", index=False)
     print(f"strategy_performance.csv: {len(strategy_performance)} rows ({strategy_performance['strategy'].nunique()} strategies)")
     print(f"equity_curves.csv: {len(equity_curves):,} rows")
+    print(f"sma_trade_markers.csv: {len(sma_trade_markers)} BUY/SELL markers")
 
     if not market_benchmark.empty:
         market_benchmark.to_csv(DATA_DIR / "market_benchmark.csv", index=False)
@@ -1049,6 +1140,7 @@ def main(refresh: bool = False) -> None:
             "SMA 100/300",
         ],
         "default_stock": STOCK_UNIVERSE[0],
+        "default_sma_strategy": "SMA 50/200",
         "default_temporal_strategy": "SMA 50/200",
         "default_pairs_window": "W01" if not pairs_tv.empty else None,
         "generated_at": date.today().strftime("%Y-%m-%d"),
@@ -1072,7 +1164,7 @@ def main(refresh: bool = False) -> None:
         "strategy_performance": dataframe_records(strategy_performance),
         "market_benchmark": dataframe_records(market_benchmark),
         "equity_curves": dataframe_records(equity_curves),
-        "strategy_signals": dataframe_records(strategy_signals),
+        "sma_trade_markers": dataframe_records(sma_trade_markers),
         "temporal_validation": dataframe_records(temporal_df),
         "pair_correlations": dataframe_records(pair_correlations),
         "pairs_temporal_validation": dataframe_records(pairs_tv),
