@@ -6,7 +6,8 @@
 
 - 正式股票母體：MCD、KO、AAPL、MSFT、ORCL
 - 市場基準：SPY（僅作為基準；不納入配對交易）
-- 請求資料期間：1996-01-02 到 2026-05-11
+- 請求資料期間：1996-01-02 到 2026-05-19
+- yfinance 下載 end 參數：2026-05-20（因 end 為 exclusive）
 - 每檔股票/策略初始資本：USD 10,000
 
 問題定義：
@@ -32,6 +33,7 @@
 - SPY 嚴格作為基準，並排除於配對交易與配對選擇之外。
 - SMA 參數（20/60、50/200、100/300）為預先定義的代表性周期，未在測試資料上優化。
 - 時間驗證採用擴增視窗（無隨機拆分），以避免前視偏誤。
+- 若 yfinance 多重下載漏掉個別股票，腳本會嘗試逐一重試並在必要時跳過缺失的價格序列。
 
 安裝 Python 依賴：
 
@@ -74,12 +76,15 @@ python -m http.server 8000
 - `pair_correlations.csv` — 10 對配對（正式 5 檔股票母體）
 - `pairs_window_correlations.csv`、`pairs_temporal_validation.csv`、`pairs_temporal_curves.csv`、`pairs_temporal_signals.csv` — 配對交易輸出
 - `assumptions.json`、`dashboard.json`、`data_bundle.js`
+- `temporal_validation_robustness.csv`
+- `pairs_temporal_robustness.csv`
 
 解讀與限制
 
 - 此專案屬於教育用途，並非實時交易系統。
 - 未建模交易成本、滑價或稅金；結果可能偏向樂觀。
-- 使用同日收盤執行（已記錄於 `data/assumptions.json`）— 這是一種簡化。
+- SMA 訊號使用 shift(1) 先前可用指標，以避免當日收盤同日交易的前視偏誤。
+- 配對交易使用訓練期估計的 hedge ratio。測試期 z-score 使用測試期間截至前一日可得的 rolling spread statistics，並以 shift(1) 的 prior z-score 生成交易訊號，以降低前視偏誤。
 - 配對交易選擇僅基於訓練期相關性；相關性不保證均值回歸。
 - 樣本期間影響結論；過去績效不代表未來報酬。
 

@@ -12,7 +12,7 @@
   "market_benchmark": "SPY",
   "data_range": {
     "start": "1996-01-02",
-    "end": "2026-05-08"
+    "end": "2026-05-19"
   },
   "data_source": "Yahoo Finance via yfinance",
   "price_column": "Adj Close",
@@ -27,5 +27,5 @@
   "default_stock": "MCD",
   "default_temporal_strategy": "SMA 50/200",
   "default_pairs_window": "W01",
-  "generated_at": "2026-05-18"
+  "generated_at": "2026-05-20"
 }

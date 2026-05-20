@@ -1,0 +1,2 @@
+number_of_windows,positive_return_windows,positive_return_ratio,avg_annualized_return,median_annualized_return,min_annualized_return,max_annualized_return,avg_max_drawdown,worst_max_drawdown,avg_volatility,avg_sharpe_ratio,avg_trades,most_common_selected_pair,robustness_comment
+30,13,0.433333,0.012628,-0.002345,-0.063519,0.145122,-0.465822,-1.153502,0.795236,0.152903,60.733333,MSFT-ORCL,此配對交易樣本摘要僅供歷史穩健性參考，無法保證未來結果。

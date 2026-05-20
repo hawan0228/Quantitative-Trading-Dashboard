@@ -4,7 +4,8 @@ Generate the data bundle for the Quantitative Trading dashboard.
 Formal specifications:
 - Stock universe: MCD, KO, AAPL, MSFT, ORCL (5 stocks)
 - Market benchmark: SPY (not part of pairs trading)
-- Data period: 1996-01-02 to 2026-05-11
+- Data target period: 1996-01-02 through 2026-05-19
+- yfinance download end date: 2026-05-20 because yfinance end is exclusive
 - Strategies: Buy-and-Hold, Fair DCA, SMA 20/60, SMA 50/200, SMA 100/300, SPY Buy-and-Hold
 - Pairs trading: Only 5 formal stocks, SPY excluded
 
@@ -62,7 +63,9 @@ ALL_TICKERS = STOCK_UNIVERSE + [MARKET_BENCHMARK]
 
 # Data period
 REQUESTED_START_DATE = "1996-01-02"
-REQUESTED_END_DATE = "2026-05-11"
+REQUESTED_TARGET_END_DATE = "2026-05-19"
+YFINANCE_END_DATE = "2026-05-20"
+REQUESTED_END_DATE = YFINANCE_END_DATE  # legacy alias for yfinance download end
 
 PRICE_COLUMN = "Adj Close"
 INITIAL_CAPITAL = 10_000.0
@@ -72,6 +75,8 @@ SMA_LONG_WINDOW = 200
 PAIR_ZSCORE_WINDOW = 60
 PAIR_ENTRY_THRESHOLD = 2.0
 PAIR_EXIT_THRESHOLD = 0.5
+TEMPORAL_VALIDATION_METHOD = "expanding_window_all_future_test"
+PAIR_SELECTION_METHOD = "training_period_correlation_ranking"
 
 SMA_STRATEGIES = [
     {"name": "SMA 20/60", "short_window": 20, "long_window": 60},
@@ -86,7 +91,7 @@ class Performance:
     total_invested: float
     final_value: float
     cumulative_return: float
-    annualized_return: float
+    annualized_return: float | None
     max_drawdown: float
     volatility: float
     sharpe_ratio: float | None
@@ -97,7 +102,7 @@ class Performance:
             "total_invested": round(self.total_invested, 2),
             "final_value": round(self.final_value, 2),
             "cumulative_return": round(self.cumulative_return, 6),
-            "annualized_return": round(self.annualized_return, 6),
+            "annualized_return": None if self.annualized_return is None else round(self.annualized_return, 6),
             "max_drawdown": round(self.max_drawdown, 6),
             "volatility": round(self.volatility, 6),
             "sharpe_ratio": None if self.sharpe_ratio is None else round(self.sharpe_ratio, 6),
@@ -130,7 +135,13 @@ def perf_metrics(equity: pd.Series, total_invested: float, initial_capital: floa
 
     days = max((equity.index[-1] - equity.index[0]).days, 1)
     years = days / 365.25
-    annualized_return = (final_value / total_invested) ** (1.0 / years) - 1.0 if total_invested > 0 and years > 0 else 0.0
+    ratio = final_value / total_invested if total_invested > 0 else float("nan")
+    if total_invested > 0 and years > 0 and ratio > 0:
+        annualized_return = ratio ** (1.0 / years) - 1.0
+    elif total_invested > 0 and years > 0:
+        annualized_return = None
+    else:
+        annualized_return = None
 
     daily_returns = equity.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
     volatility = float(daily_returns.std() * math.sqrt(TRADING_DAYS)) if not daily_returns.empty else 0.0
@@ -139,7 +150,7 @@ def perf_metrics(equity: pd.Series, total_invested: float, initial_capital: floa
     drawdown = equity / running_max - 1.0
     max_drawdown = float(drawdown.min()) if not drawdown.empty else 0.0
 
-    sharpe_ratio = None if volatility <= 1e-12 else annualized_return / volatility
+    sharpe_ratio = None if annualized_return is None or volatility <= 1e-12 else annualized_return / volatility
     return Performance(initial_capital, total_invested, final_value, cumulative_return, annualized_return, max_drawdown, volatility, sharpe_ratio)
 
 
@@ -158,16 +169,50 @@ def load_prices(refresh: bool = False) -> pd.DataFrame:
     if yf is None:
         raise RuntimeError("yfinance is not installed and no cached stock_prices.csv file is available.")
 
-    print(f"Downloading {ALL_TICKERS} from {REQUESTED_START_DATE} to {REQUESTED_END_DATE} ...")
+    print(
+        f"Downloading {ALL_TICKERS} from {REQUESTED_START_DATE} to {YFINANCE_END_DATE} "
+        f"(target coverage through {REQUESTED_TARGET_END_DATE}) ..."
+    )
     raw = yf.download(
         ALL_TICKERS,
         start=REQUESTED_START_DATE,
-        end=REQUESTED_END_DATE,
+        end=YFINANCE_END_DATE,
         auto_adjust=False,
         progress=False,
         group_by="ticker",
         threads=True,
     )
+
+    missing_tickers = [ticker for ticker in ALL_TICKERS if ticker not in raw.columns.get_level_values(0)]
+    if missing_tickers:
+        print(f"Warning: Missing price data for {missing_tickers}. Attempting individual downloads...")
+        for ticker in missing_tickers:
+            try:
+                single_raw = yf.download(
+                    ticker,
+                    start=REQUESTED_START_DATE,
+                    end=YFINANCE_END_DATE,
+                    auto_adjust=False,
+                    progress=False,
+                    group_by="ticker",
+                    threads=False,
+                )
+            except Exception as exc:
+                print(f"  Failed individual download for {ticker}: {exc}")
+                continue
+
+            if isinstance(single_raw.columns, pd.MultiIndex) and ticker in single_raw.columns.get_level_values(0):
+                raw = pd.concat([raw, single_raw], axis=1)
+            elif not isinstance(single_raw.columns, pd.MultiIndex):
+                single_raw.columns = pd.MultiIndex.from_product([[ticker], single_raw.columns])
+                raw = pd.concat([raw, single_raw], axis=1)
+            else:
+                print(f"  Individual download did not return expected columns for {ticker}.")
+
+        missing_tickers = [ticker for ticker in ALL_TICKERS if ticker not in raw.columns.get_level_values(0)]
+        if missing_tickers:
+            print(f"  Still missing price data for {missing_tickers} after individual retry.")
+
     frames = []
     for ticker in ALL_TICKERS:
         if ticker not in raw.columns.get_level_values(0):
@@ -243,6 +288,17 @@ def first_trading_day_each_month(index: pd.DatetimeIndex) -> list[pd.Timestamp]:
 
 def strategy_buy_and_hold(prices: pd.Series, initial_capital: float = INITIAL_CAPITAL) -> StrategyResult:
     prices = prices.dropna().astype(float)
+    if prices.empty:
+        return StrategyResult(
+            equity=pd.Series([], dtype=float, name="equity"),
+            cash=pd.Series([], dtype=float, name="cash"),
+            asset_value=pd.Series([], dtype=float, name="asset_value"),
+            units=pd.Series([], dtype=float, name="units"),
+            signals=pd.DataFrame([], columns=["date", "signal", "price", "shares", "cash_after"]),
+            total_invested=0.0,
+            number_of_trades=0,
+            strategy_notes="No price data available.",
+        )
     shares = initial_capital / prices.iloc[0]
     asset_value = prices * shares
     cash = pd.Series(0.0, index=prices.index, name="cash")
@@ -268,9 +324,29 @@ def strategy_buy_and_hold(prices: pd.Series, initial_capital: float = INITIAL_CA
 
 def strategy_dca(prices: pd.Series, total_invested: float = INITIAL_CAPITAL) -> StrategyResult:
     prices = prices.dropna().astype(float)
+    if prices.empty:
+        return StrategyResult(
+            equity=pd.Series([], dtype=float, name="equity"),
+            cash=pd.Series([], dtype=float, name="cash"),
+            asset_value=pd.Series([], dtype=float, name="asset_value"),
+            units=pd.Series([], dtype=float, name="units"),
+            signals=pd.DataFrame([], columns=["date", "signal", "price", "shares", "contribution", "cash_after"]),
+            total_invested=0.0,
+            number_of_trades=0,
+            strategy_notes="No price data available.",
+        )
     invest_dates = first_trading_day_each_month(prices.index)
     if not invest_dates:
-        raise RuntimeError("DCA requires at least one trading date.")
+        return StrategyResult(
+            equity=pd.Series([], dtype=float, name="equity"),
+            cash=pd.Series([], dtype=float, name="cash"),
+            asset_value=pd.Series([], dtype=float, name="asset_value"),
+            units=pd.Series([], dtype=float, name="units"),
+            signals=pd.DataFrame([], columns=["date", "signal", "price", "shares", "contribution", "cash_after"]),
+            total_invested=0.0,
+            number_of_trades=0,
+            strategy_notes="No trading dates available.",
+        )
 
     monthly_contribution = total_invested / len(invest_dates)
     cash_balance = total_invested
@@ -335,9 +411,20 @@ def strategy_sma_cross(
         combined = combined[~combined.index.duplicated(keep="last")]
     else:
         combined = prices
+    if prices.empty:
+        return StrategyResult(
+            equity=pd.Series([], dtype=float, name="equity"),
+            cash=pd.Series([], dtype=float, name="cash"),
+            asset_value=pd.Series([], dtype=float, name="asset_value"),
+            units=pd.Series([], dtype=float, name="units"),
+            signals=pd.DataFrame([], columns=["date", "signal", "price", "shares", "cash_after", "reason"]),
+            total_invested=0.0,
+            number_of_trades=0,
+            strategy_notes="No price data available.",
+        )
 
-    sma_short = combined.rolling(short_window).mean()
-    sma_long = combined.rolling(long_window).mean()
+    sma_short = combined.rolling(short_window).mean().shift(1)
+    sma_long = combined.rolling(long_window).mean().shift(1)
     above = (sma_short > sma_long).astype(int)
     cross = above.diff().fillna(0)
 
@@ -363,7 +450,7 @@ def strategy_sma_cross(
             "price": first_price,
             "shares": float(shares),
             "cash_after": 0.0,
-            "reason": "Bullish regime active at test start.",
+            "reason": "Bullish regime active by prior-period SMA regime at test start.",
         })
 
     for current_date, price in prices.items():
@@ -378,6 +465,7 @@ def strategy_sma_cross(
                 "price": float(price),
                 "shares": float(shares),
                 "cash_after": 0.0,
+                "reason": "Signal based on prior available adjusted close data; executed at current close."
             })
         elif signal == -1 and in_market:
             cash_balance = shares * price
@@ -389,6 +477,7 @@ def strategy_sma_cross(
                 "price": float(price),
                 "shares": 0.0,
                 "cash_after": float(cash_balance),
+                "reason": "Signal based on prior available adjusted close data; executed at current close."
             })
 
         asset_value = shares * price
@@ -406,7 +495,7 @@ def strategy_sma_cross(
         total_invested=initial_capital,
         number_of_trades=len(signal_rows),
         strategy_notes=(
-            "Pre-defined SMA rule. Signals use only the stock's own adjusted close price. Cash retained after sells. Fractional shares allowed."
+            "Pre-defined SMA rule. Signals are computed from prior available adjusted close data using shifted smoothing windows; trades execute on current close."
         ),
     )
 
@@ -415,6 +504,17 @@ def strategy_sma_cross(
 def strategy_spy_buy_and_hold(prices: pd.Series, initial_capital: float = INITIAL_CAPITAL) -> StrategyResult:
     """SPY Buy-and-Hold as market benchmark."""
     prices = prices.dropna().astype(float)
+    if prices.empty:
+        return StrategyResult(
+            equity=pd.Series([], dtype=float, name="equity"),
+            cash=pd.Series([], dtype=float, name="cash"),
+            asset_value=pd.Series([], dtype=float, name="asset_value"),
+            units=pd.Series([], dtype=float, name="units"),
+            signals=pd.DataFrame([], columns=["date", "signal", "price", "shares", "cash_after"]),
+            total_invested=0.0,
+            number_of_trades=0,
+            strategy_notes="No price data available.",
+        )
     shares = initial_capital / prices.iloc[0]
     asset_value = prices * shares
     cash = pd.Series(0.0, index=prices.index, name="cash")
@@ -464,7 +564,10 @@ def run_problem_one_backtests(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
     # Run for formal 5 stocks
     for ticker in STOCK_UNIVERSE:
         price_series = prices_df.loc[prices_df["Symbol"] == ticker].set_index("Date")[PRICE_COLUMN]
-        
+        if price_series.empty:
+            print(f"Warning: price series missing for {ticker}; skipping Problem 1 strategies for this ticker.")
+            continue
+
         for strategy_name, runner in strategies.items():
             result = runner(price_series)
             perf = perf_metrics(result.equity, result.total_invested, INITIAL_CAPITAL)
@@ -473,8 +576,8 @@ def run_problem_one_backtests(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
                 "strategy": strategy_name,
                 **perf.as_row(),
                 "number_of_trades": result.number_of_trades,
-                "excess_annualized_return_vs_spy": round(perf.annualized_return - spy_ann_return, 6),
-                "outperformed_spy": perf.annualized_return > spy_ann_return,
+                "excess_annualized_return_vs_spy": None if perf.annualized_return is None or spy_ann_return is None else round(perf.annualized_return - spy_ann_return, 6),
+                "outperformed_spy": False if perf.annualized_return is None or spy_ann_return is None else perf.annualized_return > spy_ann_return,
                 "monthly_contribution": round(INITIAL_CAPITAL / len(first_trading_day_each_month(price_series.index)), 6)
                 if strategy_name == "Fair DCA"
                 else None,
@@ -512,8 +615,8 @@ def run_problem_one_backtests(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
                 "strategy": sma_name,
                 **perf.as_row(),
                 "number_of_trades": result.number_of_trades,
-                "excess_annualized_return_vs_spy": round(perf.annualized_return - spy_ann_return, 6),
-                "outperformed_spy": perf.annualized_return > spy_ann_return,
+                "excess_annualized_return_vs_spy": None if perf.annualized_return is None or spy_ann_return is None else round(perf.annualized_return - spy_ann_return, 6),
+                "outperformed_spy": False if perf.annualized_return is None or spy_ann_return is None else perf.annualized_return > spy_ann_return,
                 "monthly_contribution": None,
                 "notes": result.strategy_notes,
             }
@@ -641,8 +744,28 @@ def build_tv_row(
     if spy_test_slice is not None and not spy_test_slice.empty:
         spy_perf = perf_metrics(strategy_spy_buy_and_hold(spy_test_slice).equity, INITIAL_CAPITAL, INITIAL_CAPITAL)
 
+    if strategy_name == "Buy-and-Hold":
+        selected_parameters = "N/A"
+        parameter_selection_method = "benchmark_no_training_parameters"
+    elif strategy_name == "Fair DCA":
+        selected_parameters = f"monthly_contribution = {INITIAL_CAPITAL} / {len(first_trading_day_each_month(test_slice.index))}"
+        parameter_selection_method = "predefined_benchmark_rule"
+    else:
+        selected_parameters = f"short_window={result.strategy_notes and result.strategy_notes.split(' ')[0] or 'N/A'}"
+        parameter_selection_method = "predefined_rule_not_optimized_on_test_data"
+        if "SMA 20/60" in strategy_name:
+            selected_parameters = "short_window=20,long_window=60"
+        elif "SMA 50/200" in strategy_name:
+            selected_parameters = "short_window=50,long_window=200"
+        elif "SMA 100/300" in strategy_name:
+            selected_parameters = "short_window=100,long_window=300"
+
     return {
         "window_id": window_id,
+        "validation_method": TEMPORAL_VALIDATION_METHOD,
+        "parameter_selection_method": parameter_selection_method,
+        "selected_parameters": selected_parameters,
+        "signal_execution_timing": "Shifted prior-period SMA / prior data signals; current close execution.",
         "train_start": train_slice.index.min().strftime("%Y-%m-%d"),
         "train_end": train_slice.index.max().strftime("%Y-%m-%d"),
         "test_start": test_slice.index.min().strftime("%Y-%m-%d"),
@@ -650,24 +773,24 @@ def build_tv_row(
         "ticker": ticker,
         "strategy": strategy_name,
         **perf.as_row(),
-        "excess_annualized_return_vs_spy": None if spy_perf is None else round(perf.annualized_return - spy_perf.annualized_return, 6),
-        "outperformed_spy": False if spy_perf is None else perf.annualized_return > spy_perf.annualized_return,
+        "excess_annualized_return_vs_spy": None if spy_perf is None or perf.annualized_return is None or spy_perf.annualized_return is None else round(perf.annualized_return - spy_perf.annualized_return, 6),
+        "outperformed_spy": False if spy_perf is None or perf.annualized_return is None or spy_perf.annualized_return is None else perf.annualized_return > spy_perf.annualized_return,
         "number_of_trades": result.number_of_trades,
     }
 
 
 def build_pivot(prices_df: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
-    """Build pivot for given tickers only."""
+    """Build pivot table of adjusted prices for the given tickers."""
     filtered = prices_df[prices_df["Symbol"].isin(tickers)]
-    pivot = filtered.pivot(index="Date", columns="Symbol", values=PRICE_COLUMN).sort_index()
-    return pivot.dropna()
+    pivot = filtered.pivot(index="Date", columns="Symbol", values=PRICE_COLUMN)
+    return pivot.sort_index().sort_index(axis=1)
 
 
-def pair_ranking_from_pivot(pivot: pd.DataFrame, pair_universe: list[str]) -> pd.DataFrame:
-    """Rank pairs within given universe."""
-    returns = pivot[[col for col in pivot.columns if col in pair_universe]].pct_change().dropna()
+def pair_ranking_from_pivot(pivot: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
+    """Rank pair candidates by pairwise return correlation."""
+    returns = pivot[[col for col in pivot.columns if col in tickers]].pct_change().dropna()
     rows = []
-    for stock_a, stock_b in combinations(pair_universe, 2):
+    for stock_a, stock_b in combinations(tickers, 2):
         if stock_a not in returns.columns or stock_b not in returns.columns:
             continue
         correlation = float(returns[stock_a].corr(returns[stock_b]))
@@ -696,6 +819,7 @@ def adf_result_for_pair(spread: pd.Series) -> tuple[float | None, float | None, 
 def pairs_backtest(
     pivot: pd.DataFrame,
     pair: tuple[str, str],
+    train_pivot: pd.DataFrame | None = None,
     test_start: pd.Timestamp | None = None,
     test_end: pd.Timestamp | None = None,
     lookback: int = PAIR_ZSCORE_WINDOW,
@@ -704,16 +828,27 @@ def pairs_backtest(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, object]]:
     stock_a, stock_b = pair
     combined = pivot[[stock_a, stock_b]].copy().dropna()
+    if train_pivot is None:
+        train_pivot = combined
+    train_combined = train_pivot[[stock_a, stock_b]].copy().dropna()
 
     if test_start is None:
         test_start = combined.index.min()
     if test_end is None:
         test_end = combined.index.max()
 
-    spread = np.log(combined[stock_a]) - np.log(combined[stock_b])
+    train_log_a = np.log(train_combined[stock_a]).astype(float)
+    train_log_b = np.log(train_combined[stock_b]).astype(float)
+    if len(train_log_a) < 2 or len(train_log_b) < 2:
+        hedge_ratio = 1.0
+    else:
+        hedge_ratio = float(np.polyfit(train_log_b, train_log_a, 1)[0])
+
+    spread = np.log(combined[stock_a]) - hedge_ratio * np.log(combined[stock_b])
     rolling_mean = spread.rolling(lookback).mean()
     rolling_std = spread.rolling(lookback).std()
     zscore = (spread - rolling_mean) / rolling_std
+    signal_zscore = zscore.shift(1)
 
     test_index = combined.loc[(combined.index >= test_start) & (combined.index <= test_end)].index
     capital = INITIAL_CAPITAL
@@ -731,11 +866,12 @@ def pairs_backtest(
     for current_date in test_index:
         price_a = float(combined.loc[current_date, stock_a])
         price_b = float(combined.loc[current_date, stock_b])
-        current_z = zscore.loc[current_date]
+        raw_z = zscore.loc[current_date]
+        signal_z = signal_zscore.loc[current_date]
 
-        if pd.notna(current_z):
+        if pd.notna(signal_z):
             if position == 0:
-                if current_z >= entry_threshold:
+                if signal_z >= entry_threshold:
                     leg_capital = capital / 2.0
                     a_units = -leg_capital / price_a
                     b_units = leg_capital / price_b
@@ -747,9 +883,10 @@ def pairs_backtest(
                         "signal": "ENTRY_SHORT_A_LONG_B",
                         "long_leg": stock_b,
                         "short_leg": stock_a,
-                        "zscore": float(current_z),
+                        "zscore": None if pd.isna(raw_z) else float(raw_z),
+                        "signal_zscore_used": float(signal_z),
                     })
-                elif current_z <= -entry_threshold:
+                elif signal_z <= -entry_threshold:
                     leg_capital = capital / 2.0
                     a_units = leg_capital / price_a
                     b_units = -leg_capital / price_b
@@ -761,9 +898,10 @@ def pairs_backtest(
                         "signal": "ENTRY_LONG_A_SHORT_B",
                         "long_leg": stock_a,
                         "short_leg": stock_b,
-                        "zscore": float(current_z),
+                        "zscore": None if pd.isna(raw_z) else float(raw_z),
+                        "signal_zscore_used": float(signal_z),
                     })
-            elif abs(current_z) < exit_threshold:
+            elif abs(signal_z) < exit_threshold:
                 realized_value = cash_balance + a_units * price_a + b_units * price_b
                 capital = realized_value
                 cash_balance = capital
@@ -775,10 +913,11 @@ def pairs_backtest(
                 position = 0
                 signal_rows.append({
                     "date": current_date,
-                    "signal": "EXIT",
-                    "long_leg": "-",
-                    "short_leg": "-",
-                    "zscore": float(current_z),
+                        "signal": "EXIT",
+                        "long_leg": "-",
+                        "short_leg": "-",
+                        "zscore": None if pd.isna(raw_z) else float(raw_z),
+                        "signal_zscore_used": float(signal_z),
                 })
 
         portfolio_value = cash_balance + a_units * price_a + b_units * price_b if position != 0 else capital
@@ -789,7 +928,8 @@ def pairs_backtest(
             "price_a": price_a,
             "price_b": price_b,
             "spread": None if pd.isna(spread.loc[current_date]) else float(spread.loc[current_date]),
-            "zscore": None if pd.isna(current_z) else float(current_z),
+            "zscore": None if pd.isna(raw_z) else float(raw_z),
+            "signal_zscore": None if pd.isna(signal_z) else float(signal_z),
             "position": position,
             "portfolio_value": float(portfolio_value),
         })
@@ -798,21 +938,34 @@ def pairs_backtest(
     signals_df = pd.DataFrame(signal_rows)
     equity = log_df.set_index("date")["portfolio_value"].astype(float)
     perf = perf_metrics(equity, INITIAL_CAPITAL, INITIAL_CAPITAL)
-    adf_stat, adf_p_value, mean_reversion_comment = adf_result_for_pair(spread.loc[:test_end])
+    train_spread = np.log(train_combined[stock_a]) - hedge_ratio * np.log(train_combined[stock_b])
+    test_spread = spread.loc[test_start:test_end]
+    train_adf_stat, train_adf_p_value, train_mean_reversion_comment = adf_result_for_pair(train_spread)
+    test_adf_stat, test_adf_p_value, test_mean_reversion_comment = adf_result_for_pair(test_spread)
     summary = {
         "selected_pair": f"{stock_a}-{stock_b}",
         "stock_a": stock_a,
         "stock_b": stock_b,
-        "spread_definition": f"log({stock_a}) - log({stock_b})",
+        "spread_definition": f"log({stock_a}) - {hedge_ratio:.6f}*log({stock_b})",
+        "hedge_ratio": round(hedge_ratio, 6),
         "zscore_window": lookback,
         "entry_threshold": entry_threshold,
         "exit_threshold": exit_threshold,
+        "pair_selection_method": PAIR_SELECTION_METHOD,
+        "pair_training_sample_start": train_combined.index.min().strftime("%Y-%m-%d") if not train_combined.empty else None,
+        "pair_training_sample_end": train_combined.index.max().strftime("%Y-%m-%d") if not train_combined.empty else None,
         **perf.as_row(),
         "number_of_trades": trades_completed,
         "win_rate": 0.0 if trades_completed == 0 else round(wins / trades_completed, 6),
-        "adf_statistic": None if adf_stat is None else round(adf_stat, 6),
-        "adf_p_value": None if adf_p_value is None else round(adf_p_value, 6),
-        "mean_reversion_comment": mean_reversion_comment,
+        "train_adf_statistic": None if train_adf_stat is None else round(train_adf_stat, 6),
+        "train_adf_p_value": None if train_adf_p_value is None else round(train_adf_p_value, 6),
+        "train_mean_reversion_comment": train_mean_reversion_comment,
+        "test_adf_statistic": None if test_adf_stat is None else round(test_adf_stat, 6),
+        "test_adf_p_value": None if test_adf_p_value is None else round(test_adf_p_value, 6),
+        "test_mean_reversion_comment": test_mean_reversion_comment,
+        "adf_statistic": None if train_adf_stat is None else round(train_adf_stat, 6),
+        "adf_p_value": None if train_adf_p_value is None else round(train_adf_p_value, 6),
+        "mean_reversion_comment": train_mean_reversion_comment,
     }
     return log_df, signals_df, summary
 
@@ -858,6 +1011,7 @@ def pairs_temporal_validation(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
         log_df, signals_df, summary = pairs_backtest(
             test_pivot,
             pair,
+            train_pivot=train_pivot,
             test_start=test_start,
             test_end=test_end,
         )
@@ -871,6 +1025,10 @@ def pairs_temporal_validation(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
             "selected_pair": summary["selected_pair"],
             "stock_a": summary["stock_a"],
             "stock_b": summary["stock_b"],
+            "pair_selection_method": summary.get("pair_selection_method"),
+            "pair_training_sample_start": summary.get("pair_training_sample_start"),
+            "pair_training_sample_end": summary.get("pair_training_sample_end"),
+            "hedge_ratio": summary.get("hedge_ratio"),
             "train_correlation": float(best["correlation"]),
             "spread_definition": summary["spread_definition"],
             "zscore_window": summary["zscore_window"],
@@ -886,6 +1044,12 @@ def pairs_temporal_validation(prices_df: pd.DataFrame) -> tuple[pd.DataFrame, pd
             "sharpe_ratio": summary["sharpe_ratio"],
             "number_of_trades": summary["number_of_trades"],
             "win_rate": summary["win_rate"],
+            "train_adf_statistic": summary.get("train_adf_statistic"),
+            "train_adf_p_value": summary.get("train_adf_p_value"),
+            "train_mean_reversion_comment": summary.get("train_mean_reversion_comment"),
+            "test_adf_statistic": summary.get("test_adf_statistic"),
+            "test_adf_p_value": summary.get("test_adf_p_value"),
+            "test_mean_reversion_comment": summary.get("test_mean_reversion_comment"),
             "adf_statistic": summary["adf_statistic"],
             "adf_p_value": summary["adf_p_value"],
             "mean_reversion_comment": summary["mean_reversion_comment"],
@@ -919,7 +1083,8 @@ def build_assumptions(number_of_months: int, actual_start_date: str, actual_end_
         "market_benchmark": MARKET_BENCHMARK,
         "data_source": "Yahoo Finance via yfinance，或使用快取的 stock_prices.csv",
         "requested_start_date": REQUESTED_START_DATE,
-        "requested_end_date": REQUESTED_END_DATE,
+        "requested_target_end_date": REQUESTED_TARGET_END_DATE,
+        "yfinance_end_date": YFINANCE_END_DATE,
         "actual_start_date": actual_start_date,
         "actual_end_date": actual_end_date,
         "price_column": PRICE_COLUMN,
@@ -931,7 +1096,7 @@ def build_assumptions(number_of_months: int, actual_start_date: str, actual_end_
         "slippage": "未包含",
         "taxes": "未包含",
         "risk_free_rate": 0.0,
-        "signal_execution_timing": "同日收盤執行（簡化）。",
+        "signal_execution_timing": "Signals are computed from prior available adjusted close data using shifted indicators; trades are executed on the current adjusted close as a next-bar approximation.",
         "sma_strategies": SMA_STRATEGIES,
         "sma_signal_source": "每組 SMA 策略僅使用該檔股票自身的調整後收盤價。",
         "sma_parameter_note": "預先定義代表性周期（短/中/長）。不在測試資料上優化。",
@@ -943,11 +1108,105 @@ def build_assumptions(number_of_months: int, actual_start_date: str, actual_end_
         "borrowing_costs": "未包含",
         "temporal_validation_method": "擴增視窗。時間序列不使用隨機拆分。",
         "pair_selection_rule": "僅在股票母體內選擇訓練期日報酬相關性最高的配對。不使用測試期資料。",
-        "look_ahead_bias_control": "配對在每個訓練視窗內選出，僅於後續測試視窗測試。",
+        "look_ahead_bias_control": "SMA 使用先前可用的移動平均信號；配對交易使用訓練期估計的 hedge ratio、spread 參數，且測試期信號以 shift(1) prior z-score 生成。",
         "spy_usage_note": "SPY 僅作為市場基準；不納入配對交易。",
         "removed_strategy_note": "已移除舊有相對動量輸出。活躍策略為 Buy-and-Hold、Fair DCA、SMA 20/60、SMA 50/200 以及 SMA 100/300。",
         "cleanup_note": "已清理舊有檔案；若需要更新資料，請執行 generate_data.py --refresh。",
     }
+
+
+def build_temporal_validation_robustness(temporal_df: pd.DataFrame) -> pd.DataFrame:
+    if temporal_df.empty:
+        return pd.DataFrame(columns=[
+            "ticker",
+            "strategy",
+            "number_of_windows",
+            "positive_return_windows",
+            "positive_return_ratio",
+            "outperform_spy_windows",
+            "outperform_spy_ratio",
+            "avg_annualized_return",
+            "median_annualized_return",
+            "min_annualized_return",
+            "max_annualized_return",
+            "avg_max_drawdown",
+            "worst_max_drawdown",
+            "avg_volatility",
+            "avg_sharpe_ratio",
+            "robustness_comment",
+        ])
+
+    rows = []
+    for (ticker, strategy), group in temporal_df.groupby(["ticker", "strategy"]):
+        num = len(group)
+        pos = int((group["cumulative_return"] > 0).sum())
+        out = int((group["outperformed_spy"] == True).sum())
+        sharpe_vals = pd.to_numeric(group["sharpe_ratio"], errors="coerce").dropna()
+        rows.append({
+            "ticker": ticker,
+            "strategy": strategy,
+            "number_of_windows": num,
+            "positive_return_windows": pos,
+            "positive_return_ratio": round(pos / num, 6) if num else 0.0,
+            "outperform_spy_windows": out,
+            "outperform_spy_ratio": round(out / num, 6) if num else 0.0,
+            "avg_annualized_return": round(group["annualized_return"].mean(), 6),
+            "median_annualized_return": round(group["annualized_return"].median(), 6),
+            "min_annualized_return": round(group["annualized_return"].min(), 6),
+            "max_annualized_return": round(group["annualized_return"].max(), 6),
+            "avg_max_drawdown": round(group["max_drawdown"].mean(), 6),
+            "worst_max_drawdown": round(group["max_drawdown"].min(), 6),
+            "avg_volatility": round(group["volatility"].mean(), 6),
+            "avg_sharpe_ratio": None if sharpe_vals.empty else round(sharpe_vals.mean(), 6),
+            "robustness_comment": (
+                f"基於 {num} 個時序驗證視窗的歷史穩健性摘要；不代表未來績效。"
+            ),
+        })
+    return pd.DataFrame(rows)
+
+
+def build_pairs_temporal_robustness(pairs_df: pd.DataFrame) -> pd.DataFrame:
+    if pairs_df.empty:
+        return pd.DataFrame(columns=[
+            "number_of_windows",
+            "positive_return_windows",
+            "positive_return_ratio",
+            "avg_annualized_return",
+            "median_annualized_return",
+            "min_annualized_return",
+            "max_annualized_return",
+            "avg_max_drawdown",
+            "worst_max_drawdown",
+            "avg_volatility",
+            "avg_sharpe_ratio",
+            "avg_trades",
+            "most_common_selected_pair",
+            "robustness_comment",
+        ])
+
+    num = len(pairs_df)
+    pos = int((pairs_df["cumulative_return"] > 0).sum())
+    sharpe_vals = pd.to_numeric(pairs_df["sharpe_ratio"], errors="coerce").dropna()
+    most_common = pairs_df["selected_pair"].mode()
+    top_pair = most_common.iloc[0] if not most_common.empty else None
+    return pd.DataFrame([{
+        "number_of_windows": num,
+        "positive_return_windows": pos,
+        "positive_return_ratio": round(pos / num, 6) if num else 0.0,
+        "avg_annualized_return": round(pairs_df["annualized_return"].mean(), 6),
+        "median_annualized_return": round(pairs_df["annualized_return"].median(), 6),
+        "min_annualized_return": round(pairs_df["annualized_return"].min(), 6),
+        "max_annualized_return": round(pairs_df["annualized_return"].max(), 6),
+        "avg_max_drawdown": round(pairs_df["max_drawdown"].mean(), 6),
+        "worst_max_drawdown": round(pairs_df["max_drawdown"].min(), 6),
+        "avg_volatility": round(pairs_df["volatility"].mean(), 6),
+        "avg_sharpe_ratio": None if sharpe_vals.empty else round(sharpe_vals.mean(), 6),
+        "avg_trades": round(pairs_df["number_of_trades"].mean(), 6),
+        "most_common_selected_pair": top_pair,
+        "robustness_comment": (
+            "此配對交易樣本摘要僅供歷史穩健性參考，無法保證未來結果。"
+        ),
+    }])
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -988,6 +1247,11 @@ def main(refresh: bool = False) -> None:
     actual_end = prices_df["Date"].max().strftime("%Y-%m-%d")
     print(f"Actual data range: {actual_start} to {actual_end}")
     print(f"stock_prices.csv: {len(prices_df):,} rows")
+    if refresh and pd.Timestamp(actual_end) < pd.Timestamp(REQUESTED_TARGET_END_DATE):
+        print(
+            "Warning: actual_end_date is before target coverage date. "
+            f"Actual end = {actual_end}, target = {REQUESTED_TARGET_END_DATE}."
+        )
 
     stock_summary = build_stock_summary(prices_df)
     stock_summary.to_csv(DATA_DIR / "stock_summary.csv", index=False)
@@ -1022,6 +1286,14 @@ def main(refresh: bool = False) -> None:
     pairs_window_correlations.to_csv(DATA_DIR / "pairs_window_correlations.csv", index=False)
     pairs_tv_signals.to_csv(DATA_DIR / "pairs_temporal_signals.csv", index=False)
     print(f"pairs_temporal_validation.csv: {len(pairs_tv)} windows")
+
+    temporal_robustness = build_temporal_validation_robustness(temporal_df)
+    temporal_robustness.to_csv(DATA_DIR / "temporal_validation_robustness.csv", index=False)
+    print(f"temporal_validation_robustness.csv: {len(temporal_robustness)} rows")
+
+    pairs_robustness = build_pairs_temporal_robustness(pairs_tv)
+    pairs_robustness.to_csv(DATA_DIR / "pairs_temporal_robustness.csv", index=False)
+    print(f"pairs_temporal_robustness.csv: {len(pairs_robustness)} rows")
 
     # Assumptions & dashboard
     full_sample_months = len(first_trading_day_each_month(pd.DatetimeIndex(prices_df["Date"])))
@@ -1079,6 +1351,8 @@ def main(refresh: bool = False) -> None:
         "pairs_temporal_curves": dataframe_records(pairs_tv_curves),
         "pairs_window_correlations": dataframe_records(pairs_window_correlations),
         "pairs_temporal_signals": dataframe_records(pairs_tv_signals),
+        "temporal_validation_robustness": dataframe_records(temporal_robustness),
+        "pairs_temporal_robustness": dataframe_records(pairs_robustness),
     }
 
     with (DATA_DIR / "data_bundle.js").open("w", encoding="utf-8") as handle:

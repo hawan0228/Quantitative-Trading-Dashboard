@@ -76,6 +76,7 @@
             <li>課程專案使用的量化交易回測儀表板。</li>
             <li>靜態 HTML/CSS/JavaScript 前端由預先生成的資料檔案驅動。</li>
             <li>SMA 訊號僅基於個別股票的調整後收盤價；SPY 僅作為基準。</li>
+            <li>資料請求目標涵蓋至 2026-05-19；yfinance end 2026-05-20，因 end 參數為 exclusive。</li>
             <li>專注於明確說明假設、公平性與時序驗證。</li>
           </ul>
         </div>
@@ -233,7 +234,9 @@
         <ul class="bullets">
           <li>時間序列資料不使用隨機拆分。</li>
           <li>使用擴增視窗，例如 2014 訓練 / 2015 起測試，再增加訓練期測試後續年份。</li>
+          <li>訓練期永遠先於測試期；測試結果為樣本外評估。</li>
           <li>SMA 策略採固定規則參數，時序驗證評估穩定性，而非在測試資料上優化。</li>
+          <li>SMA 訊號使用 shift(1) 先前可用指標，避免當日收盤同日交易的前視偏誤。</li>
         </ul>
       </div>
 
@@ -264,6 +267,10 @@
               <th>波動率</th>
               <th>Sharpe 比率</th>
               <th>交易次數</th>
+              <th>驗證方式</th>
+              <th>參數來源</th>
+              <th>選定參數</th>
+              <th>訊號執行時機</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -290,7 +297,9 @@
           <li>初始資本為 USD 10,000。</li>
           <li>允許放空。每次進場採用等額 50% 多頭與 50% 空頭。</li>
           <li>價差 = log(price A) - log(price B)，z-score 視窗 = 60，進場條件 |z| ≥ 2，平倉條件 |z| &lt; 0.5。</li>
-          <li>SPY 不納入配對交易；候選配對僅從正式股票母體中選出。</li>
+          <li>候選配對僅從訓練期相關性最高的正式股票母體選出，測試期不參與配對選擇。</li>
+          <li>hedge ratio 與 spread 參數由訓練期估計；測試期 z-score 使用 training-derived parameters。</li>
+          <li>配對交易訊號以 shift(1) prior z-score 生成，避免當日價格資訊的前視偏誤。</li>
           <li>相關性有助於挑選候選配對，但相關性本身不保證均值回歸。</li>
         </ul>
       </div>
@@ -415,6 +424,16 @@
       </div>
 
       <h2 class="section-title">年化報酬排序</h2>
+      <div class="grid grid-2">
+        <div class="card">
+          <h3 class="card-title">時序驗證穩健性</h3>
+          <div class="kv-list" id="robustness-temporal"></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">配對交易穩健性</h3>
+          <div class="kv-list" id="robustness-pairs"></div>
+        </div>
+      </div>
       <div class="card table-card">
         <table id="summary-rank-table">
           <thead>

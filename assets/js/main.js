@@ -43,6 +43,15 @@
     data_source: '資料來源',
     stock_universe: '股票母體',
     market_benchmark: '市場基準',
+    requested_start_date: '請求起始',
+    requested_target_end_date: '請求目標結束',
+    yfinance_end_date: 'yfinance 下載 end',
+    actual_start_date: '實際起始',
+    actual_end_date: '實際結束',
+    price_column: '價格欄位',
+    initial_capital: '初始資本',
+    dca_total_invested: 'DCA 總投入',
+    dca_monthly_contribution_rule: 'DCA 每月投入規則',
     fractional_shares: '可交易碎股',
     transaction_costs: '交易成本',
     short_selling: '放空',
@@ -69,9 +78,11 @@
   const priceRows = D.stock_prices || [];
   const equityCurves = D.equity_curves || [];
   const temporalRows = D.temporal_validation || [];
+  const temporalRobustness = D.temporal_validation_robustness || [];
   const pairTemporalRows = D.pairs_temporal_validation || [];
   const pairTemporalCurves = D.pairs_temporal_curves || [];
   const pairWindowCorrelations = D.pairs_window_correlations || [];
+  const pairsRobustness = D.pairs_temporal_robustness || [];
   const assumptions = D.assumptions || {};
 
   const byTicker = Object.fromEntries(stockSummary.map((row) => [row.ticker, row]));
@@ -182,6 +193,11 @@
       ['資料來源', assumptions.data_source],
       ['股票母體', (assumptions.stock_universe || []).join('、')],
       ['市場基準', assumptions.market_benchmark || 'N/A'],
+      ['請求起始', assumptions.requested_start_date],
+      ['請求目標結束', assumptions.requested_target_end_date],
+      ['yfinance 下載 end', assumptions.yfinance_end_date],
+      ['實際起始', assumptions.actual_start_date],
+      ['實際結束', assumptions.actual_end_date],
       ['可交易碎股', String(assumptions.fractional_shares)],
       ['交易成本', assumptions.transaction_costs],
       ['放空', String(assumptions.short_selling)],
@@ -423,6 +439,10 @@
         <td>${fmtPct(row.volatility)}</td>
         <td>${fmtSharpe(row.sharpe_ratio)}</td>
         <td>${row.number_of_trades}</td>
+        <td>${row.validation_method || 'N/A'}</td>
+        <td>${row.parameter_selection_method || 'N/A'}</td>
+        <td>${row.selected_parameters || 'N/A'}</td>
+        <td>${row.signal_execution_timing || 'N/A'}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -440,9 +460,12 @@
     setText('pair-sharpe', fmtSharpe(row.sharpe_ratio));
     setText('pair-trades', `${row.number_of_trades} 筆完成交易 | 勝率 ${fmtPct(row.win_rate)}`);
 
-    let meanReversionText = row.mean_reversion_comment || '相關性不保證均值回歸。';
-    if (row.adf_p_value != null) {
-      meanReversionText += ` ADF p-value = ${fmtNum(row.adf_p_value, 4)}。`;
+    let meanReversionText = row.train_mean_reversion_comment || '相關性不保證均值回歸。';
+    if (row.train_adf_p_value != null) {
+      meanReversionText += ` 訓練期 ADF p-value = ${fmtNum(row.train_adf_p_value, 4)}。`;
+    }
+    if (row.test_adf_p_value != null) {
+      meanReversionText += ` 測試期 ADF p-value = ${fmtNum(row.test_adf_p_value, 4)}（僅供報告參考）。`;
     }
     document.getElementById('pair-mean-reversion-note').textContent = meanReversionText;
 
@@ -550,6 +573,29 @@
       `;
       tbody.appendChild(tr);
     });
+
+    const temporalSummary = temporalRobustness[0] || {};
+    const pairsSummary = pairsRobustness[0] || {};
+    const temporalWrap = document.getElementById('robustness-temporal');
+    const pairsWrap = document.getElementById('robustness-pairs');
+    if (temporalWrap) {
+      temporalWrap.innerHTML = `
+        <div class="kv-row"><span class="k">視窗數</span><span class="v">${temporalSummary.number_of_windows ?? 'N/A'}</span></div>
+        <div class="kv-row"><span class="k">正報酬比率</span><span class="v">${fmtPct(temporalSummary.positive_return_ratio)}</span></div>
+        <div class="kv-row"><span class="k">優於 SPY 比率</span><span class="v">${fmtPct(temporalSummary.outperform_spy_ratio)}</span></div>
+        <div class="kv-row"><span class="k">平均年化報酬</span><span class="v">${fmtSignedPct(temporalSummary.avg_annualized_return)}</span></div>
+        <div class="kv-row"><span class="k">最差最大回撤</span><span class="v">${fmtPct(temporalSummary.worst_max_drawdown)}</span></div>
+      `;
+    }
+    if (pairsWrap) {
+      pairsWrap.innerHTML = `
+        <div class="kv-row"><span class="k">視窗數</span><span class="v">${pairsSummary.number_of_windows ?? 'N/A'}</span></div>
+        <div class="kv-row"><span class="k">正報酬比率</span><span class="v">${fmtPct(pairsSummary.positive_return_ratio)}</span></div>
+        <div class="kv-row"><span class="k">平均年化報酬</span><span class="v">${fmtSignedPct(pairsSummary.avg_annualized_return)}</span></div>
+        <div class="kv-row"><span class="k">最差最大回撤</span><span class="v">${fmtPct(pairsSummary.worst_max_drawdown)}</span></div>
+        <div class="kv-row"><span class="k">最常見配對</span><span class="v">${pairsSummary.most_common_selected_pair || 'N/A'}</span></div>
+      `;
+    }
 
     const assumptionsBody = document.querySelector('#assumptions-table tbody');
     assumptionsBody.innerHTML = '';
